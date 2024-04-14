@@ -14,34 +14,30 @@ const Point2D = struct {
 };
 
 const EdgeTableEntry = struct {
-    y_min:          c_int,
-    y_max:          c_int,
-    x_of_y_min:     c_int,
+    y_min:          u32,
+    y_max:          u32,
+    x:              u32, // x of y_min if it's ET (not AET)
     inverse_slope:  f32,
 };
 
 fn compareEdgeTableEntryByMinY(_: void, lhs: EdgeTableEntry, rhs: EdgeTableEntry) bool {
-    return lhs.y_min < rhs.y_min;
+    return lhs.y_min > rhs.y_min;
 }
 
 fn compareEdgeTableEntryByX(_: void, lhs: EdgeTableEntry, rhs: EdgeTableEntry) bool {
-    return lhs.x_of_y_min < rhs.x_of_y_min;
+    return lhs.x < rhs.x;
 }
 
-fn getPolygonMinY(polygon: []const Point2D) u32 {
-    var y: u32 = std.math.maxInt(u32);
-    for (polygon) |vertex| {
-        if (vertex.y < y) y = vertex.y;
+fn RemoveEdgesAET(aet: *std.ArrayList(EdgeTableEntry), y: u32) void {
+    loop: while (true) {
+        for (aet.items, 0..) |item, i| {
+            if (item.y_max == y) {
+                _ = aet.orderedRemove(i);
+                continue :loop;
+            }
+        }
+        break :loop;
     }
-    return y;
-}
-
-fn getPolygonMaxY(polygon: []const Point2D) u32 {
-    var y: u32 = std.math.minInt(u32);
-    for (polygon) |vertex| {
-        if (vertex.y > y) y = vertex.y;
-    }
-    return y;
 }
 
 pub fn main() !void {
@@ -70,9 +66,7 @@ pub fn main() !void {
     // -- Game loop -------
     // --------------------
     gameloop: while (true) {
-        std.debug.print("\n", .{});
-
-        const time_start: s.Uint64 = s.SDL_GetTicks64();
+        // const time_start: s.Uint64 = s.SDL_GetTicks64();
 
         // Event processing
         var event: s.SDL_Event = undefined;
@@ -90,92 +84,101 @@ pub fn main() !void {
         _ = s.SDL_RenderClear(renderer);
 
         const polygon = [_]Point2D{
-            .{.x = 2, .y = 3},      // A
-            .{.x = 7, .y = 1},      // B
-            .{.x = 13, .y = 5},     // C
-            .{.x = 13, .y = 11},    // D
-            .{.x = 7, .y = 7},      // E
-            .{.x = 2, .y = 9},      // F
+            .{.x = 2 * 10, .y = 3 * 10},      // A
+            .{.x = 7 * 10, .y = 1 * 10},      // B
+            .{.x = 13 * 10, .y = 5 * 10},     // C
+            .{.x = 13 * 10, .y = 11 * 10},    // D
+            .{.x = 7 * 10, .y = 7 * 10},      // E
+            .{.x = 2 * 10, .y = 9 * 10},      // F
         };
 
         // Draw polygon outline
         _ = s.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
         inline for (0..polygon.len) |i| _ = s.SDL_RenderDrawLine(renderer, polygon[i].x, polygon[i].y, polygon[(i + 1) % polygon.len].x, polygon[(i + 1) % polygon.len].y);
-
-        // Create "Edge Table (ET)"
-        var edge_table: [polygon.len]EdgeTableEntry = undefined;
-        inline for (0..polygon.len) |i| {
-            const A = &polygon[i % polygon.len];
-            const B = &polygon[(i + 1) % polygon.len];
-
-            if (A.y <= B.y) {
-                edge_table[i % polygon.len].y_min = A.y;
-                edge_table[i % polygon.len].y_max = B.y;
-                edge_table[i % polygon.len].x_of_y_min = A.x;
-                edge_table[i % polygon.len].inverse_slope = switch (A.x == B.x) {
-                    true => 0,
-                    false => 1.0 / @as(f32, ( @as(f32, (@as(f32, A.y) - @as(f32, B.y))) / @as(f32, (@as(f32, A.x) - @as(f32, B.x))) )),
-                };
-            } else {
-                edge_table[i % polygon.len].y_min = B.y;
-                edge_table[i % polygon.len].y_max = A.y;
-                edge_table[i % polygon.len].x_of_y_min = B.x;
-                edge_table[i % polygon.len].inverse_slope = switch (A.x == B.x) {
-                    true => 0,
-                    false => 1.0 / @as(f32, ( @as(f32, (@as(f32, A.y) - @as(f32, B.y))) / @as(f32, (@as(f32, A.x) - @as(f32, B.x))) )),
-                };
-            }
-        }
-
-        // Sort ET by `y_min` field
-        std.sort.insertion(EdgeTableEntry, &edge_table, {}, compareEdgeTableEntryByMinY);
-        for (edge_table) |i| std.debug.print("({d}, {d}, {d}, {d})\n", .{i.y_min, i.y_max, i.x_of_y_min, i.inverse_slope});
-
-        // Get min and max y values
-        const y_min = getPolygonMinY(&polygon);
-        const y_max = getPolygonMaxY(&polygon);
-        std.debug.print("y_min = {d}, y_max = {d}\n", .{y_min, y_max});
-
-        // Create "Active Edge Table (AET)"
+        
         var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-
-        // This causes segfault. Probably must be a global variable or something.
-        // _ = gpa.deinit();
-
         const allocator = gpa.allocator();
 
-        // Do not deinit() because toOwnedSlice()
-        var aet_list = std.ArrayList(EdgeTableEntry).init(allocator);
-        aet_list.deinit();
+        // Will need it later
+        var y: u32 = std.math.maxInt(u32);
 
-        // Main loop
-        for (y_min..y_max + 1) |y| {
-            // Move any edges from the ET to the AET where y = y_min
-            for (edge_table) |edge| {
-                if (edge.y_min == y) try aet_list.append(edge);
-            }
-            std.debug.print("AET before:\t{any}\n", .{aet_list.items});
+        // Create ET
+        var et = try std.ArrayList(EdgeTableEntry).initCapacity(allocator, polygon.len);
+        defer et.deinit();
+        for (0..polygon.len) |i| {
+            const A = polygon[i];
+            const B = polygon[(i + 1) % polygon.len];
 
-            // This gives slice, which is (kinda like?) array pointer
-            var aet_slice = aet_list.items;
+            const entry: EdgeTableEntry = .{
+                .y_min = switch (A.y <= B.y) {
+                    true => A.y,
+                    false => B.y,
+                },
+                .y_max = switch (A.y > B.y) {
+                    true => A.y,
+                    false => B.y,
+                },
+                .x = switch (A.y <= B.y) {
+                    true => A.x,
+                    false => B.x,
+                },
+                .inverse_slope = switch (A.x == B.x) {
+                    false => ( @as(f32, @floatFromInt(B.x)) - @as(f32, @floatFromInt(A.x)) ) /
+                             ( @as(f32, @floatFromInt(B.y)) - @as(f32, @floatFromInt(A.y)) ),
+                    true => 0,
+                }
+            };
+            try et.append(entry);
 
-            // Sort AET by x field
-            std.sort.insertion(EdgeTableEntry, aet_slice, {}, compareEdgeTableEntryByX);
-            std.debug.print("AET after:\t{any}\n", .{aet_list.items});
-
-            // Fill current line using pairs of x coordinates from AET
-            std.debug.print("Imagine filling...\n", .{});
-
-            // std.debug.print("Waiting for 8192 ms now...\n", .{});
-            // s.SDL_Delay(8192);
+            if (entry.y_min < y) y = entry.y_min;
         }
-        
-        _ = s.SDL_SetRenderDrawColor(renderer, 0xEF, 0x76, 0x7A, 0xFF);
 
-        _ = s.SDL_RenderPresent(renderer);
+        std.sort.insertion(EdgeTableEntry, et.items, {}, compareEdgeTableEntryByMinY);
 
-        s.SDL_Log("Scene render time (ms): %llu\n", s.SDL_GetTicks64() - time_start);
+        // Create AET
+        var aet = std.ArrayList(EdgeTableEntry).init(allocator);
+        defer aet.deinit();
 
-        break :gameloop;
+        while (et.items.len != 0 or aet.items.len != 0) {
+            std.debug.print("\n", .{});
+
+            // Move ET edges with vertices' whose y_min == y
+            while (et.items.len != 0 and et.items[et.items.len - 1].y_min == y)
+                try aet.append(et.pop());
+
+            // Sort AET by x
+            std.sort.insertion(EdgeTableEntry, aet.items, {}, compareEdgeTableEntryByX);
+
+            for (aet.items) |item| {
+                std.debug.print("{}\n", .{item});
+            }
+
+            // Fill pixels
+            std.debug.print("Drawing pixels...\n", .{});
+            _ = s.SDL_SetRenderDrawColor(renderer, 0xEF, 0x76, 0x7A, 0xFF);
+            _ = s.SDL_RenderDrawLine(renderer, @intCast(aet.items[0].x), @intCast(y), @intCast(aet.items[1].x), @intCast(y));
+
+            y += 1;
+
+            // Remove AET edges with vertices' whose y_max == y
+            std.debug.print("Remove AET edges...\n", .{});
+            RemoveEdgesAET(&aet, y);
+
+            // Update x values
+            std.debug.print("Update x values...\n", .{});
+            for (aet.items) |*item| {
+                const x_as_f32: f32 = @as(f32, @floatFromInt(item.x));
+                const result: f32 = x_as_f32 + item.inverse_slope;
+                const result_as_u32: u32 = @as(u32, @intFromFloat(@round(result)));
+                item.x = result_as_u32;
+            }
+
+            _ = s.SDL_RenderPresent(renderer);
+            s.SDL_Delay(500);
+        }        
+
+        // s.SDL_Log("Scene render time (ms): %llu\n", s.SDL_GetTicks64() - time_start);
+
+        // break :gameloop;
     }
 }
