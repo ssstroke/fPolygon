@@ -74,14 +74,22 @@ pub fn main() !void {
         _ = s.SDL_SetRenderDrawColor(renderer, 0x23, 0xF0, 0xC7, 0xFF); // Is there a way to "squeeze" those colors into one... structure?
         _ = s.SDL_RenderClear(renderer);
 
-        const polygon = [_]Point2D{
-            .{.x = 2 * 20, .y = 3 * 20},      // A
-            .{.x = 7 * 20, .y = 1 * 20},      // B
-            .{.x = 13 * 20, .y = 5 * 20},     // C
-            .{.x = 13 * 20, .y = 11 * 20},    // D
-            .{.x = 7 * 20, .y = 7 * 20},      // E
-            .{.x = 2 * 20, .y = 9 * 20},      // F
+        var polygon = [_]Point2D{
+            .{ .x = 2,  .y = 5  },
+            .{ .x = 7,  .y = 2  },
+            .{ .x = 8,  .y = 4  },
+            .{ .x = 10, .y = 1  },
+            .{ .x = 12, .y = 7  },
+            .{ .x = 16, .y = 10 },
+            .{ .x = 18, .y = 6  },
+            .{ .x = 20, .y = 12 },
+            .{ .x = 6,  .y = 14 },
+            .{ .x = 2,  .y = 11 },
         };
+        for (&polygon) |*point| {
+            point.x *= 20;
+            point.y *= 20;
+        }
 
         // Draw polygon outline
         _ = s.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
@@ -169,10 +177,12 @@ pub fn main() !void {
 
             _ = s.SDL_SetRenderDrawColor(renderer, 0xEF, 0x76, 0x7A, 0xFF);
             s.SDL_RenderPresent(renderer);
+
+            s.SDL_Delay(50);
         }
 
         s.SDL_Log("Scene render time (ms): %llu\n", s.SDL_GetTicks64() - time_start);
-        
+
         break :gameloop;
     }
 }
