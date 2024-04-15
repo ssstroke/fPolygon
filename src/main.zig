@@ -4,31 +4,32 @@ const s = @cImport({
     @cInclude("SDL.h");
 });
 
-const WINDOW_WIDTH = 640;
+const WINDOW_WIDTH  = 640;
 const WINDOW_HEIGHT = 480;
 
-// TODO: Use `usize` or `u32` and then use @as(c_int, ...) syntax when calling SDL functions.
 const Point2D = struct {
-    x: u32,
-    y: u32,
+    x: u16,
+    y: u16,
 };
 
 const EdgeTableEntry = struct {
-    y_min:          u32,
-    y_max:          u32,
-    x:              u32, // x of y_min if it's ET (not AET)
+    y_min:          u16,
+    y_max:          u16,
+    x:              f32, // x of y_min if it's ET (not AET)
     inverse_slope:  f32,
 };
 
+// Greater than
 fn compareEdgeTableEntryByMinY(_: void, lhs: EdgeTableEntry, rhs: EdgeTableEntry) bool {
     return lhs.y_min > rhs.y_min;
 }
 
+// Less than
 fn compareEdgeTableEntryByX(_: void, lhs: EdgeTableEntry, rhs: EdgeTableEntry) bool {
     return lhs.x < rhs.x;
 }
 
-fn RemoveEdgesAET(aet: *std.ArrayList(EdgeTableEntry), y: u32) void {
+fn RemoveEdgesAET(aet: *std.ArrayList(EdgeTableEntry), y: u16) void {
     loop: while (true) {
         for (aet.items, 0..) |item, i| {
             if (item.y_max == y) {
@@ -50,7 +51,9 @@ pub fn main() !void {
     }
     defer s.SDL_Quit();
 
-    const window: *s.SDL_Window = s.SDL_CreateWindow("ZILBERTE", s.SDL_WINDOWPOS_UNDEFINED, s.SDL_WINDOWPOS_UNDEFINED, WINDOW_WIDTH, WINDOW_HEIGHT, s.SDL_WINDOW_SHOWN) orelse {
+    const window: *s.SDL_Window = s.SDL_CreateWindow("ZILBERTE",
+                                                     s.SDL_WINDOWPOS_UNDEFINED, s.SDL_WINDOWPOS_UNDEFINED,
+                                                     WINDOW_WIDTH, WINDOW_HEIGHT, s.SDL_WINDOW_SHOWN) orelse {
         s.SDL_LogError(s.SDL_LOG_CATEGORY_ERROR, "Error creating a window: %s\n", s.SDL_GetError());
         return error.windowError;
     };
@@ -84,99 +87,124 @@ pub fn main() !void {
         _ = s.SDL_RenderClear(renderer);
 
         const polygon = [_]Point2D{
-            .{.x = 2 * 10, .y = 3 * 10},      // A
-            .{.x = 7 * 10, .y = 1 * 10},      // B
-            .{.x = 13 * 10, .y = 5 * 10},     // C
-            .{.x = 13 * 10, .y = 11 * 10},    // D
-            .{.x = 7 * 10, .y = 7 * 10},      // E
-            .{.x = 2 * 10, .y = 9 * 10},      // F
+            .{.x = 2 * 4, .y = 3 * 4},      // A
+            .{.x = 7 * 4, .y = 1 * 4},      // B
+            .{.x = 13 * 4, .y = 5 * 4},     // C
+            .{.x = 13 * 4, .y = 11 * 4},    // D
+            .{.x = 7 * 4, .y = 7 * 4},      // E
+            .{.x = 2 * 4, .y = 9 * 4},      // F
         };
 
         // Draw polygon outline
         _ = s.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
-        inline for (0..polygon.len) |i| _ = s.SDL_RenderDrawLine(renderer, polygon[i].x, polygon[i].y, polygon[(i + 1) % polygon.len].x, polygon[(i + 1) % polygon.len].y);
+        inline for (0..polygon.len) |i|
+            _ = s.SDL_RenderDrawLine(renderer,
+                                     @as(c_int, polygon[i].x), polygon[i].y,
+                                     @as(c_int, polygon[(i + 1) % polygon.len].x), polygon[(i + 1) % polygon.len].y);
         
         var gpa = std.heap.GeneralPurposeAllocator(.{}){};
         const allocator = gpa.allocator();
 
-        // Will need it later
-        var y: u32 = std.math.maxInt(u32);
-
         // Create ET
         var et = try std.ArrayList(EdgeTableEntry).initCapacity(allocator, polygon.len);
         defer et.deinit();
+
+        @compileLog("hello_1");
+
         for (0..polygon.len) |i| {
+            @compileLog("hello_2");
+
             const A = polygon[i];
             const B = polygon[(i + 1) % polygon.len];
 
+            @compileLog("hello_3");
+
             const entry: EdgeTableEntry = .{
                 .y_min = switch (A.y <= B.y) {
-                    true => A.y,
+                    true  => A.y,
                     false => B.y,
                 },
                 .y_max = switch (A.y > B.y) {
-                    true => A.y,
+                    true  => A.y,
                     false => B.y,
                 },
                 .x = switch (A.y <= B.y) {
-                    true => A.x,
-                    false => B.x,
+                    // TODO: See if @TypeOf() is possible here.
+                    // TODO: Report wrong compiler error message.
+                    true  => @as(f32, @floatFromInt(A.x)),
+                    false => @as(f32, @floatFromInt(B.x)),
                 },
                 .inverse_slope = switch (A.x == B.x) {
-                    false => ( @as(f32, @floatFromInt(B.x)) - @as(f32, @floatFromInt(A.x)) ) /
-                             ( @as(f32, @floatFromInt(B.y)) - @as(f32, @floatFromInt(A.y)) ),
-                    true => 0,
+                    // false => ( @as(f32, @floatFromInt(A.x)) - @as(f32, @floatFromInt(B.x)) ) /
+                    //          ( @as(f32, @floatFromInt(A.y)) - @as(f32, @floatFromInt(B.y)) ),
+                    false => (A.x - B.x) / (A.y - B.y),
+                    true  => 0,
                 }
             };
-            try et.append(entry);
+            
+            @compileLog("hello_4");
 
-            if (entry.y_min < y) y = entry.y_min;
+            try et.append(entry);
         }
 
         std.sort.insertion(EdgeTableEntry, et.items, {}, compareEdgeTableEntryByMinY);
 
-        // Create AET
+        var y = et.items[et.items.len - 1].y_min;
+
         var aet = std.ArrayList(EdgeTableEntry).init(allocator);
-        defer aet.deinit();
 
         while (et.items.len != 0 or aet.items.len != 0) {
-            std.debug.print("\n", .{});
-
-            // Move ET edges with vertices' whose y_min == y
-            while (et.items.len != 0 and et.items[et.items.len - 1].y_min == y)
+            // Move edges in ET with Ymin = y into AET
+            while (et.items.len != 0 and et.items[et.items.len - 1].y_min == y) {
                 try aet.append(et.pop());
-
-            // Sort AET by x
-            std.sort.insertion(EdgeTableEntry, aet.items, {}, compareEdgeTableEntryByX);
-
-            for (aet.items) |item| {
-                std.debug.print("{}\n", .{item});
             }
 
-            // Fill pixels
-            std.debug.print("Drawing pixels...\n", .{});
-            _ = s.SDL_SetRenderDrawColor(renderer, 0xEF, 0x76, 0x7A, 0xFF);
-            _ = s.SDL_RenderDrawLine(renderer, @intCast(aet.items[0].x), @intCast(y), @intCast(aet.items[1].x), @intCast(y));
+            // Sort AET on X
+            std.sort.insertion(EdgeTableEntry, aet.items, {}, compareEdgeTableEntryByX);
+            std.debug.print("{any}\n", .{aet.items});
+            
+            // Draw pixels
+            var inside = false;
+            var x1: f32 = undefined;
+            var x2: f32 = undefined;
+            for (aet.items) |edge| {
+                switch (inside) {
+                    false => x1 = edge.x,
+                    true  => x2 = edge.x,
+                }
+                
+                inside = !inside;
+
+                // if (!inside) _ = s.SDL_RenderDrawLine(renderer,
+                //                                       @as(c_int, @intCast(x1)), @as(c_int, @intCast(y)),
+                //                                       @as(c_int, @intCast(x2)), @as(c_int, @intCast(y)));
+
+                // if (!inside) { // TODO: wtf
+                //     const x1_casted = @as(c_int, switch (inside) {
+                //         false => @ceil(x1),
+                //         true  => @floor(x1),
+                //     });
+                //     const x2_casted = @as(c_int, switch (inside) {
+                //         false => @ceil(x2),
+                //         true  => @floor(x2),
+                //     });
+                //     _ = s.SDL_RenderDrawLine(renderer, x1_casted, y, x2_casted, y);
+                // }
+            }
 
             y += 1;
-
-            // Remove AET edges with vertices' whose y_max == y
-            std.debug.print("Remove AET edges...\n", .{});
             RemoveEdgesAET(&aet, y);
 
             // Update x values
-            std.debug.print("Update x values...\n", .{});
-            for (aet.items) |*item| {
-                const x_as_f32: f32 = @as(f32, @floatFromInt(item.x));
-                const result: f32 = x_as_f32 + item.inverse_slope;
-                const result_as_u32: u32 = @as(u32, @intFromFloat(@round(result)));
-                item.x = result_as_u32;
-            }
+            for (aet.items) |*item|
+                item.x += item.inverse_slope;
 
-            _ = s.SDL_RenderPresent(renderer);
-            s.SDL_Delay(500);
-        }        
+            s.SDL_RenderPresent(renderer);
 
+            s.SDL_Delay(1000);
+        }
+
+        break :gameloop;
         // s.SDL_Log("Scene render time (ms): %llu\n", s.SDL_GetTicks64() - time_start);
 
         // break :gameloop;
